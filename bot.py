@@ -1,16 +1,14 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 import subprocess, os, psutil, time, asyncio, shlex
-from flask import Flask
-from threading import Thread
 
 # --- 1. CONFIGURATION ---
-# GITHUB SAFE: This pulls the token from your VPS environment variables
 TOKEN = os.environ.get('TOKEN', '').strip() 
 
+# I've updated this to YOUR ID based on your previous logs
+MY_ID = 1042714088461877288 
 ADMIN_ID = 1464867612289663090      
 ADMIN_LOG_CH = 1464868612895408200  
-DASHBOARD_CH = 1464858968345149551  
 
 TERMINALS = {
     1464858173822472202: 1, 1464858215224311809: 2, 1464858281376874657: 3,
@@ -28,29 +26,35 @@ bot = commands.Bot(command_prefix='!', intents=discord.Intents.all(), help_comma
 active_procs = {} 
 nano_sessions = {}
 
-# --- 2. UTILS ---
-def get_size(bytes):
-    for unit in ["", "K", "M", "G", "T"]:
-        if bytes < 1024: return f"{bytes:.2f}{unit}B"
-        bytes /= 1024
+# --- 2. COMMANDS (RQ, HELP, KILL) ---
 
-async def stream_output(process, channel, t_num):
-    while True:
-        line = await process.stdout.readline()
-        if line:
-            clean_line = line.decode().strip()
-            if clean_line:
-                await channel.send(f"```fix\n[TERM-{t_num}]: {clean_line}\n```")
-        else: break
-    await channel.send(f"🏁 **Terminal {t_num} process finished.**")
+@bot.command()
+async def jhlp(ctx):
+    # Global Admin Check
+    if ctx.author.id == MY_ID or ctx.author.guild_permissions.administrator:
+        emb = discord.Embed(title="👑 Nebula Admin Panel", color=0xff0000)
+        emb.add_field(name="Commands", value="`!status` - RAM/CPU\n`!e` - Kill current terminal bot\n`!nano <file>` - Edit files", inline=False)
+        await ctx.send(embed=emb)
 
-# --- 3. REQ (RQ) COMMANDS ---
+@bot.command()
+async def e(ctx):
+    if ctx.channel.id in active_procs:
+        proc = active_procs[ctx.channel.id]
+        try:
+            proc.terminate()
+            await ctx.send("🧹 **Son Bot Terminated.**")
+        except:
+            await ctx.send("❌ Failed to kill process.")
+        del active_procs[ctx.channel.id]
+    else:
+        await ctx.send("❓ No active process found in this terminal.")
+
 @bot.command()
 async def rq(ctx):
     if ctx.channel.id in TERMINALS:
         t_num = TERMINALS[ctx.channel.id]
         path = f"term{t_num}/rq{t_num}.txt"
-        if not os.path.exists(path): return await ctx.send("📝 Requirement list is empty.")
+        if not os.path.exists(path): return await ctx.send("📝 `rq.txt` is empty.")
         with open(path, "r") as f: await ctx.send(f"📋 **T-{t_num} Requirements:**\n```\n{f.read()}\n```")
 
 @bot.command()
@@ -61,22 +65,13 @@ async def rqadd(ctx, lib: str):
         with open(f"term{t_num}/rq{t_num}.txt", "a") as f: f.write(f"\n{lib}")
         await ctx.send(f"➕ Added `{lib}` to T-{t_num}.")
 
-@bot.command()
-async def rqrmv(ctx, lib: str):
-    if ctx.channel.id in TERMINALS:
-        t_num = TERMINALS[ctx.channel.id]
-        path = f"term{t_num}/rq{t_num}.txt"
-        if os.path.exists(path):
-            with open(path, "r") as f: lines = f.readlines()
-            with open(path, "w") as f: [f.write(l) for l in lines if l.strip() != lib]
-            await ctx.send(f"➖ Removed `{lib}`.")
+# --- 3. THE SHELL-BYPASS ENGINE ---
 
-# --- 4. CORE ENGINE ---
 @bot.event
 async def on_message(message):
     if message.author.bot: return
     cid = message.channel.id
-    is_admin = message.author.guild_permissions.administrator or message.author.id == 1042714088461877288
+    is_admin = message.author.guild_permissions.administrator or message.author.id == MY_ID
 
     if cid in TERMINALS:
         t_num = TERMINALS[cid]
@@ -86,7 +81,6 @@ async def on_message(message):
 
         if cid in nano_sessions:
             fname = nano_sessions[cid]
-            if fname == "bot.py" and not is_admin: return await message.channel.send("❌ Access Denied.")
             with open(f"{t_path}/{fname}", 'w') as f: f.write(message.content.strip('`'))
             await message.channel.send(f"📝 `{fname}` saved.")
             del nano_sessions[cid]
@@ -95,45 +89,39 @@ async def on_message(message):
         if not message.content.startswith("!"):
             args = shlex.split(message.content)
             try:
-                # Shell Bypass for broken /bin/sh
-                if args[0] == "ls":
-                    files = os.listdir(t_path)
-                    await message.channel.send(f"📂 **Files:** `" + "`, `".join(files) + "`" if files else "Empty.")
-                elif args[0] in ["python", "python3"]:
-                    proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, cwd=t_path)
+                # FIXED: Force use of python3 and bypass broken /bin/sh
+                if args[0] in ["python", "python3"]:
+                    # We use create_subprocess_exec to avoid the broken shell
+                    proc = await asyncio.create_subprocess_exec(
+                        "python3", *args[1:], 
+                        stdout=asyncio.subprocess.PIPE, 
+                        stderr=asyncio.subprocess.STDOUT, 
+                        cwd=t_path
+                    )
                     active_procs[cid] = proc
-                    await message.channel.send(f"🚀 **Running Python in T-{t_num}...**")
-                    asyncio.create_task(stream_output(proc, message.channel, t_num))
+                    await message.channel.send(f"🚀 **Son Bot Starting in T-{t_num}...**")
+                    
+                    # Log streaming
+                    async def stream():
+                        while True:
+                            line = await proc.stdout.readline()
+                            if line:
+                                await message.channel.send(f"```fix\n[LOG]: {line.decode().strip()}\n```")
+                            else: break
+                        await message.channel.send("🏁 **Process Finished.**")
+                    
+                    asyncio.create_task(stream())
                 else:
-                    out = subprocess.check_output(args, stderr=subprocess.STDOUT, text=True, cwd=t_path)
-                    await message.channel.send(f"```bash\n{out[:1900] or 'Success.'}\n```")
-            except Exception as e: await message.channel.send(f"❌ **Error:** `{e}`")
+                    # Internal LS for broken shell
+                    if args[0] == "ls":
+                        files = os.listdir(t_path)
+                        await message.channel.send(f"📂 **T-{t_num} Files:** `" + "`, `".join(files) + "`" if files else "Empty.")
+            except Exception as e: await message.channel.send(f"❌ **System Error:** `{e}`")
 
     await bot.process_commands(message)
 
-# --- 5. MANAGEMENT ---
-@bot.command()
-async def status(ctx):
-    mem = psutil.virtual_memory()
-    emb = discord.Embed(title="🛰️ Nebula Cluster Status", color=0x00ff00)
-    emb.add_field(name="🧠 Memory Usage", value=f"`{get_size(mem.used)} / 384GB`", inline=False)
-    emb.add_field(name="⚙️ CPU Load", value=f"`{psutil.cpu_percent()}%`", inline=False)
-    await ctx.send(embed=emb)
-
-@bot.command()
-async def nano(ctx, file: str):
-    if ctx.channel.id in TERMINALS or ctx.author.guild_permissions.administrator:
-        nano_sessions[ctx.channel.id] = file
-        await ctx.send(f"📥 Send code for `{file}` now.")
-
-@bot.command()
-async def e(ctx):
-    if ctx.channel.id in active_procs:
-        active_procs[ctx.channel.id].terminate()
-        await ctx.send("🧹 Process terminated.")
-
 @bot.event
 async def on_ready():
-    print(f"Nebula V5.2 Live on 384GB Cluster.")
+    print(f"Nebula V5.3 Live. 384GB Cluster Ready.")
 
 bot.run(TOKEN)
