@@ -1,127 +1,126 @@
 import discord
 from discord.ext import commands
-import subprocess, os, psutil, time, asyncio, shlex
+import os, psutil, asyncio, shlex, shutil
 
-# --- 1. CONFIGURATION ---
 TOKEN = os.environ.get('TOKEN', '').strip() 
-
-# I've updated this to YOUR ID based on your previous logs
 MY_ID = 1042714088461877288 
-ADMIN_ID = 1464867612289663090      
-ADMIN_LOG_CH = 1464868612895408200  
 
-TERMINALS = {
-    1464858173822472202: 1, 1464858215224311809: 2, 1464858281376874657: 3,
-    1464858304550539315: 4, 1464858320236969984: 5, 1464858336192364634: 6,
-    1464858351958626576: 7, 1464858374188306649: 8, 1464858389711421647: 9,
-    1464858409294631139: 10, 1464858440571813908: 11, 1464858464462569768: 12,
-    1464858487354953881: 13, 1464858519592374404: 14, 1464858543684587786: 15,
-    1464858560386302134: 16, 1464858578971262996: 17, 1464858596880679075: 18,
-    1464858615776149625: 19, 1464858635166417017: 20, 1464858655433294043: 21,
-    1464858681790300202: 22, 1464858698001289347: 23, 1464858716116357235: 24,
-    1464858734332219504: 25
-}
+TERMINALS = {id: i+1 for i, id in enumerate([
+    1464858173822472202, 1464858215224311809, 1464858281376874657, 1464858304550539315,
+    1464858320236969984, 1464858336192364634, 1464858351958626576, 1464858374188306649,
+    1464858389711421647, 1464858409294631139, 1464858440571813908, 1464858464462569768,
+    1464858487354953881, 1464858519592374404, 1464858543684587786, 1464858560386302134,
+    1464858578971262996, 1464858596880679075, 1464858615776149625, 1464858635166417017,
+    1464858655433294043, 1464858681790300202, 1464858698001289347, 1464858716116357235,
+    1464858734332219504
+])}
 
 bot = commands.Bot(command_prefix='!', intents=discord.Intents.all(), help_command=None)
 active_procs = {} 
 nano_sessions = {}
 
-# --- 2. COMMANDS (RQ, HELP, KILL) ---
-
 @bot.command()
 async def jhlp(ctx):
-    # Global Admin Check
     if ctx.author.id == MY_ID or ctx.author.guild_permissions.administrator:
-        emb = discord.Embed(title="👑 Nebula Admin Panel", color=0xff0000)
-        emb.add_field(name="Commands", value="`!status` - RAM/CPU\n`!e` - Kill current terminal bot\n`!nano <file>` - Edit files", inline=False)
+        emb = discord.Embed(title="🛸 Nebula Master Control", color=0x00ff00)
+        emb.add_field(name="System", value="`!status` - RAM/CPU\n`!reset` - Clear folder\n`!e` - Kill bot", inline=False)
+        emb.add_field(name="Files", value="`!nano <file>` - Edit\n`!rq`, `!rqadd`, `!rqrmv` - Requirements", inline=False)
         await ctx.send(embed=emb)
 
 @bot.command()
-async def e(ctx):
-    if ctx.channel.id in active_procs:
-        proc = active_procs[ctx.channel.id]
-        try:
-            proc.terminate()
-            await ctx.send("🧹 **Son Bot Terminated.**")
-        except:
-            await ctx.send("❌ Failed to kill process.")
-        del active_procs[ctx.channel.id]
-    else:
-        await ctx.send("❓ No active process found in this terminal.")
+async def status(ctx):
+    mem = psutil.virtual_memory()
+    await ctx.send(f"🧠 **RAM:** `{mem.used // 1024**2}MB / 384GB` | ⚙️ **CPU:** `{psutil.cpu_percent()}%`")
+
+@bot.command()
+async def nano(ctx, file: str):
+    nano_sessions[ctx.channel.id] = file
+    await ctx.send(f"📥 **Editing `{file}`.** Send code now.")
+
+@bot.command()
+async def reset(ctx):
+    if ctx.channel.id in TERMINALS:
+        t_num = TERMINALS[ctx.channel.id]
+        shutil.rmtree(f"term{t_num}", ignore_errors=True)
+        os.makedirs(f"term{t_num}", exist_ok=True)
+        await ctx.send(f"🧹 **Terminal-{t_num} Wiped.**")
 
 @bot.command()
 async def rq(ctx):
     if ctx.channel.id in TERMINALS:
         t_num = TERMINALS[ctx.channel.id]
         path = f"term{t_num}/rq{t_num}.txt"
-        if not os.path.exists(path): return await ctx.send("📝 `rq.txt` is empty.")
-        with open(path, "r") as f: await ctx.send(f"📋 **T-{t_num} Requirements:**\n```\n{f.read()}\n```")
+        if not os.path.exists(path): return await ctx.send("📝 Empty.")
+        with open(path, "r") as f: await ctx.send(f"📋 **T-{t_num} Req:**\n```\n{f.read()}\n```")
 
 @bot.command()
 async def rqadd(ctx, lib: str):
     if ctx.channel.id in TERMINALS:
         t_num = TERMINALS[ctx.channel.id]
-        if not os.path.exists(f"term{t_num}"): os.makedirs(f"term{t_num}")
+        os.makedirs(f"term{t_num}", exist_ok=True)
         with open(f"term{t_num}/rq{t_num}.txt", "a") as f: f.write(f"\n{lib}")
-        await ctx.send(f"➕ Added `{lib}` to T-{t_num}.")
+        await ctx.send(f"➕ Added `{lib}`.")
 
-# --- 3. THE SHELL-BYPASS ENGINE ---
+@bot.command()
+async def rqrmv(ctx, lib: str):
+    if ctx.channel.id in TERMINALS:
+        path = f"term{TERMINALS[cid]}/rq{TERMINALS[cid]}.txt"
+        if os.path.exists(path):
+            with open(path, "r") as f: lines = f.readlines()
+            with open(path, "w") as f: [f.write(l) for l in lines if l.strip() != lib]
+            await ctx.send(f"➖ Removed `{lib}`.")
+
+@bot.command()
+async def e(ctx):
+    if ctx.channel.id in active_procs:
+        active_procs[ctx.channel.id].terminate()
+        del active_procs[ctx.channel.id]
+        await ctx.send("🧹 **Bot Process Killed.**")
 
 @bot.event
 async def on_message(message):
     if message.author.bot: return
     cid = message.channel.id
-    is_admin = message.author.guild_permissions.administrator or message.author.id == MY_ID
+    
+    if cid in nano_sessions:
+        t_num = TERMINALS.get(cid)
+        if t_num:
+            with open(f"term{t_num}/{nano_sessions[cid]}", 'w') as f: f.write(message.content.strip('`'))
+            await message.channel.send(f"✅ **Saved `{nano_sessions[cid]}`.**")
+            del nano_sessions[cid]
+        return
+
+    if message.content.startswith('!'):
+        await bot.process_commands(message)
+        return
 
     if cid in TERMINALS:
         t_num = TERMINALS[cid]
-        if not (discord.utils.get(message.author.roles, name=f"terminal-{t_num}") or is_admin): return
         t_path = f"term{t_num}"
-        if not os.path.exists(t_path): os.makedirs(t_path)
-
-        if cid in nano_sessions:
-            fname = nano_sessions[cid]
-            with open(f"{t_path}/{fname}", 'w') as f: f.write(message.content.strip('`'))
-            await message.channel.send(f"📝 `{fname}` saved.")
-            del nano_sessions[cid]
-            return
-
-        if not message.content.startswith("!"):
-            args = shlex.split(message.content)
-            try:
-                # FIXED: Force use of python3 and bypass broken /bin/sh
-                if args[0] in ["python", "python3"]:
-                    # We use create_subprocess_exec to avoid the broken shell
-                    proc = await asyncio.create_subprocess_exec(
-                        "python3", *args[1:], 
-                        stdout=asyncio.subprocess.PIPE, 
-                        stderr=asyncio.subprocess.STDOUT, 
-                        cwd=t_path
-                    )
-                    active_procs[cid] = proc
-                    await message.channel.send(f"🚀 **Son Bot Starting in T-{t_num}...**")
-                    
-                    # Log streaming
-                    async def stream():
-                        while True:
-                            line = await proc.stdout.readline()
-                            if line:
-                                await message.channel.send(f"```fix\n[LOG]: {line.decode().strip()}\n```")
-                            else: break
-                        await message.channel.send("🏁 **Process Finished.**")
-                    
-                    asyncio.create_task(stream())
-                else:
-                    # Internal LS for broken shell
-                    if args[0] == "ls":
-                        files = os.listdir(t_path)
-                        await message.channel.send(f"📂 **T-{t_num} Files:** `" + "`, `".join(files) + "`" if files else "Empty.")
-            except Exception as e: await message.channel.send(f"❌ **System Error:** `{e}`")
-
-    await bot.process_commands(message)
-
-@bot.event
-async def on_ready():
-    print(f"Nebula V5.3 Live. 384GB Cluster Ready.")
+        os.makedirs(t_path, exist_ok=True)
+        args = shlex.split(message.content)
+        try:
+            if args[0] == "ls":
+                files = os.listdir(t_path)
+                await message.channel.send(f"📂 **T-{t_num}:** `" + "`, `".join(files) + "`" if files else "Empty.")
+            elif args[0] == "mkdir":
+                os.makedirs(f"{t_path}/{args[1]}", exist_ok=True)
+                await message.channel.send(f"📁 Created `{args[1]}`")
+            elif args[0] == "rm":
+                target = f"{t_path}/{args[1]}"
+                if os.path.isfile(target): os.remove(target)
+                else: shutil.rmtree(target)
+                await message.channel.send(f"🗑️ Deleted `{args[1]}`")
+            elif args[0] in ["python", "python3"]:
+                proc = await asyncio.create_subprocess_exec("python3", *args[1:], stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, cwd=t_path)
+                active_procs[cid] = proc
+                await message.channel.send(f"🚀 **Son Bot Starting...**")
+                async def stream():
+                    while True:
+                        line = await proc.stdout.readline()
+                        if line: await message.channel.send(f"```fix\n{line.decode().strip()}\n```")
+                        else: break
+                asyncio.create_task(stream())
+        except Exception as e: await message.channel.send(f"❌ `{e}`")
 
 bot.run(TOKEN)
