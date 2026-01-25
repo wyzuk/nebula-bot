@@ -19,11 +19,13 @@ bot = commands.Bot(command_prefix='!', intents=discord.Intents.all(), help_comma
 active_procs = {} 
 nano_sessions = {}
 
+# --- 1. MANAGEMENT & RQ COMMANDS ---
+
 @bot.command()
 async def jhlp(ctx):
     if ctx.author.id == MY_ID or ctx.author.guild_permissions.administrator:
         emb = discord.Embed(title="🛸 Nebula Master Control", color=0x00ff00)
-        emb.add_field(name="System", value="`!status` - RAM/CPU\n`!reset` - Clear folder\n`!e` - Kill bot", inline=False)
+        emb.add_field(name="System", value="`!status` - 384GB Check\n`!e` - Kill Bot\n`!reset` - Wipe", inline=False)
         emb.add_field(name="Files", value="`!nano <file>` - Edit\n`!rq`, `!rqadd`, `!rqrmv` - Requirements", inline=False)
         await ctx.send(embed=emb)
 
@@ -31,11 +33,6 @@ async def jhlp(ctx):
 async def status(ctx):
     mem = psutil.virtual_memory()
     await ctx.send(f"🧠 **RAM:** `{mem.used // 1024**2}MB / 384GB` | ⚙️ **CPU:** `{psutil.cpu_percent()}%`")
-
-@bot.command()
-async def nano(ctx, file: str):
-    nano_sessions[ctx.channel.id] = file
-    await ctx.send(f"📥 **Editing `{file}`.** Send code now.")
 
 @bot.command()
 async def reset(ctx):
@@ -48,10 +45,9 @@ async def reset(ctx):
 @bot.command()
 async def rq(ctx):
     if ctx.channel.id in TERMINALS:
-        t_num = TERMINALS[ctx.channel.id]
-        path = f"term{t_num}/rq{t_num}.txt"
-        if not os.path.exists(path): return await ctx.send("📝 Empty.")
-        with open(path, "r") as f: await ctx.send(f"📋 **T-{t_num} Req:**\n```\n{f.read()}\n```")
+        path = f"term{TERMINALS[ctx.channel.id]}/rq{TERMINALS[ctx.channel.id]}.txt"
+        content = open(path).read() if os.path.exists(path) else "Empty."
+        await ctx.send(f"📋 **Requirements:**\n```\n{content}\n```")
 
 @bot.command()
 async def rqadd(ctx, lib: str):
@@ -59,34 +55,44 @@ async def rqadd(ctx, lib: str):
         t_num = TERMINALS[ctx.channel.id]
         os.makedirs(f"term{t_num}", exist_ok=True)
         with open(f"term{t_num}/rq{t_num}.txt", "a") as f: f.write(f"\n{lib}")
-        await ctx.send(f"➕ Added `{lib}`.")
+        await ctx.send(f"➕ Added `{lib}`")
 
 @bot.command()
 async def rqrmv(ctx, lib: str):
     if ctx.channel.id in TERMINALS:
-        path = f"term{TERMINALS[cid]}/rq{TERMINALS[cid]}.txt"
+        path = f"term{TERMINALS[ctx.channel.id]}/rq{TERMINALS[ctx.channel.id]}.txt"
         if os.path.exists(path):
-            with open(path, "r") as f: lines = f.readlines()
+            lines = open(path).readlines()
             with open(path, "w") as f: [f.write(l) for l in lines if l.strip() != lib]
-            await ctx.send(f"➖ Removed `{lib}`.")
+            await ctx.send(f"➖ Removed `{lib}`")
 
 @bot.command()
 async def e(ctx):
     if ctx.channel.id in active_procs:
         active_procs[ctx.channel.id].terminate()
         del active_procs[ctx.channel.id]
-        await ctx.send("🧹 **Bot Process Killed.**")
+        await ctx.send("🧹 **Process Killed.**")
+
+@bot.command()
+async def nano(ctx, file: str):
+    # Fixed Logic: Ensures extension if none provided, then asks for code
+    if "." not in file:
+        file = f"{file}.py"
+    nano_sessions[ctx.channel.id] = file
+    await ctx.send(f"📥 **Preparing `{file}`.** Send your code now.")
+
+# --- 2. CORE LOGIC ---
 
 @bot.event
 async def on_message(message):
     if message.author.bot: return
     cid = message.channel.id
-    
+
     if cid in nano_sessions:
         t_num = TERMINALS.get(cid)
         if t_num:
             with open(f"term{t_num}/{nano_sessions[cid]}", 'w') as f: f.write(message.content.strip('`'))
-            await message.channel.send(f"✅ **Saved `{nano_sessions[cid]}`.**")
+            await message.channel.send(f"✅ **Saved as `{nano_sessions[cid]}` in T-{t_num}.**")
             del nano_sessions[cid]
         return
 
@@ -98,11 +104,12 @@ async def on_message(message):
         t_num = TERMINALS[cid]
         t_path = f"term{t_num}"
         os.makedirs(t_path, exist_ok=True)
-        args = shlex.split(message.content)
         try:
+            args = shlex.split(message.content)
+            # Internal Python Logic to bypass broken /bin/sh
             if args[0] == "ls":
                 files = os.listdir(t_path)
-                await message.channel.send(f"📂 **T-{t_num}:** `" + "`, `".join(files) + "`" if files else "Empty.")
+                await message.channel.send(f"📂 **Files:** `" + "`, `".join(files) + "`")
             elif args[0] == "mkdir":
                 os.makedirs(f"{t_path}/{args[1]}", exist_ok=True)
                 await message.channel.send(f"📁 Created `{args[1]}`")
@@ -122,5 +129,9 @@ async def on_message(message):
                         else: break
                 asyncio.create_task(stream())
         except Exception as e: await message.channel.send(f"❌ `{e}`")
+
+@bot.event
+async def on_ready():
+    print("Nebula V5.7 Online. 384GB Cluster Ready.")
 
 bot.run(TOKEN)
