@@ -19,8 +19,6 @@ bot = commands.Bot(command_prefix='!', intents=discord.Intents.all(), help_comma
 active_procs = {} 
 nano_sessions = {}
 
-# --- 1. MANAGEMENT & RQ COMMANDS ---
-
 @bot.command()
 async def jhlp(ctx):
     if ctx.author.id == MY_ID or ctx.author.guild_permissions.administrator:
@@ -75,13 +73,10 @@ async def e(ctx):
 
 @bot.command()
 async def nano(ctx, file: str):
-    # Fixed Logic: Ensures extension if none provided, then asks for code
     if "." not in file:
         file = f"{file}.py"
     nano_sessions[ctx.channel.id] = file
     await ctx.send(f"📥 **Preparing `{file}`.** Send your code now.")
-
-# --- 2. CORE LOGIC ---
 
 @bot.event
 async def on_message(message):
@@ -106,7 +101,6 @@ async def on_message(message):
         os.makedirs(t_path, exist_ok=True)
         try:
             args = shlex.split(message.content)
-            # Internal Python Logic to bypass broken /bin/sh
             if args[0] == "ls":
                 files = os.listdir(t_path)
                 await message.channel.send(f"📂 **Files:** `" + "`, `".join(files) + "`")
